@@ -1,0 +1,383 @@
+---
+title: "Iteration"
+author: "Zoey Zhao"
+date: "11/18/2021"
+output: github_document
+---
+
+```{r message=FALSE}
+library(tidyverse)
+library(rvest)
+set.seed(1)
+```
+
+# Writing Functions
+
+```{r}
+x_vec = rnorm(25, mean = 5, sd = 3)
+
+(x_vec - mean(x_vec)) / sd(x_vec)
+
+z_scores = function(x) {
+  
+  z = (x - mean(x)) / sd(x)
+  z
+  
+}
+
+z_scores(x_vec)
+```
+
+```{r}
+mean_and_sd = function(x) {
+  
+  if (!is.numeric(x)) {
+    stop("Argument x should be numeric")
+  } else if (length(x) == 1) {
+    stop("Cannot be computed for length 1 vectors")
+  }
+  
+  mean_x = mean(x)
+  sd_x = sd(x)
+
+  list(mean = mean_x, 
+       sd = sd_x)
+}
+```
+
+# List
+```{r}
+l = list(
+  vec_numeric = 5:8,
+  mat         = matrix(1:8, 2, 4),
+  vec_logical = c(TRUE, FALSE),
+  summary     = summary(rnorm(1000)))
+l
+```
+
+```{r}
+l$vec_numeric
+l[[1]][1:3]
+```
+
+# for loops
+
+```{r}
+list_norms = 
+  list(
+    a = rnorm(20, 3, 1),
+    b = rnorm(20, 0, 5),
+    c = rnorm(20, 10, .2),
+    d = rnorm(20, -3, 1)
+  )
+
+is.list(list_norms)
+```
+
+```{r}
+mean_and_sd = function(x) {
+  
+  if (!is.numeric(x)) {
+    stop("Argument x should be numeric")
+  } else if (length(x) == 1) {
+    stop("Cannot be computed for length 1 vectors")
+  }
+  
+  mean_x = mean(x)
+  sd_x = sd(x)
+
+  tibble(
+    mean = mean_x, 
+    sd = sd_x
+  )
+}
+```
+
+```{r}
+output = vector("list", length = 4) #a list of four NULLs
+
+for (i in 1:4) {
+  output[[i]] = mean_and_sd(list_norms[[i]])
+}
+
+output
+```
+
+# map
+```{r}
+output = map(list_norms, mean_and_sd)
+output
+
+output = map(.x = list_norms, ~ mean_and_sd(.x)) #produce the same result
+```
+
+## map variant
+```{r}
+output = map_dbl(list_norms, median, .id = "input")
+output
+```
+
+
+```{r}
+output = map_dfr(list_norms, mean_and_sd, .id = "input")
+output
+```
+
+When your function has two arguments:
+```{r}
+#output = map2(.x = input_1, .y = input_2, ~func(arg_1 = .x, arg_2 = .y))
+```
+
+# List columns and operations
+
+```{r}
+listcol_df = 
+  tibble(
+    name = c("a", "b", "c", "d"),
+    samp = list_norms
+  )
+
+listcol_df
+listcol_df$samp
+```
+
+```{r}
+map(listcol_df$samp, mean_and_sd)
+```
+
+The map function returns a list; we could store the results as a new list column.
+
+```{r}
+listcol_df = 
+  listcol_df %>% 
+  mutate(summary = map(samp, mean_and_sd))
+
+listcol_df
+listcol_df$summary
+```
+
+# Nested data
+
+```{r message=FALSE}
+weather_df = 
+  rnoaa::meteo_pull_monitors(
+    c("USW00094728", "USC00519397", "USS0023B17S"),
+    var = c("PRCP", "TMIN", "TMAX"), 
+    date_min = "2017-01-01",
+    date_max = "2017-12-31") %>%
+  mutate(
+    name = recode(
+      id, 
+      USW00094728 = "CentralPark_NY", 
+      USC00519397 = "Waikiki_HA",
+      USS0023B17S = "Waterhole_WA"),
+    tmin = tmin / 10,
+    tmax = tmax / 10) %>%
+  select(name, id, everything())
+```
+
+The station name and id are constant across the year’s temperature and precipitation data. For that reason, we can reorganize these data into a new data frame with a single row for each station.
+
+```{r}
+weather_nest = 
+  nest(weather_df, data = date:tmin)
+
+weather_nest
+```
+
+```{r}
+weather_nest %>% pull(data)
+```
+
+Suppose we want to fit the simple linear regression relating tmax to tmin for each station-specific data frame. First I’ll write a quick function that takes a data frame as the sole argument to fit this model.
+
+```{r}
+weather_lm = function(df) {
+  lm(tmax ~ tmin, data = df)
+}
+
+weather_lm(weather_nest$data[[1]])
+```
+
+Since weather$data is a list, we can apply our weather_lm function to each data frame using map.
+
+```{r}
+map(weather_nest$data, weather_lm)
+```
+
+Alternatively,
+
+```{r}
+map(weather_nest$data, ~lm(tmax ~ tmin, data = .x))
+```
+
+Let’s use mutate to fit this model, and to store the result in the same dataframe.
+
+```{r}
+weather_nest = 
+  weather_nest %>% 
+  mutate(models = map(data, weather_lm))
+
+weather_nest
+```
+
+# Revisiting Napoleon
+
+```{r message=FALSE}
+library(rvest)
+```
+
+```{r}
+read_page_reviews = function(url) {
+  
+  html = read_html(url)
+  
+  title = 
+    html %>%
+    html_nodes("#cm_cr-review_list .review-title") %>%
+    html_text()
+  
+  stars = 
+    html %>%
+    html_nodes("#cm_cr-review_list .review-rating") %>%
+    html_text() %>%
+    str_extract("\\d") %>%
+    as.numeric()
+  
+  text = 
+    html %>%
+    html_nodes(".review-data:nth-child(5)") %>%
+    html_text()
+  
+  tibble(title, stars, text)
+}
+```
+
+We can use this function to read the five pages of reviews on the URLs defined in the code chunk below.
+
+```{r}
+url_base = "https://www.amazon.com/product-reviews/B00005JNBQ/ref=cm_cr_arp_d_viewopt_rvwer?ie=UTF8&reviewerType=avp_only_reviews&sortBy=recent&pageNumber="
+vec_urls = str_c(url_base, 1:5)
+```
+
+```{r}
+dynamite_reviews = map_df(vec_urls, read_page_reviews)
+```
+
+# Simulation: Mean and SD for one n
+```{r}
+sim_mean_sd = function(n, mu = 2, sigma = 3) {
+  
+  sim_data = tibble(
+    x = rnorm(n, mean = mu, sd = sigma),
+  )
+  
+  sim_data %>% 
+    summarize(
+      mu_hat = mean(x),
+      sigma_hat = sd(x)
+    )
+}
+```
+
+```{r}
+output = vector("list", 100)
+
+for (i in 1:100) {
+  output[[i]] = sim_mean_sd(30)
+}
+
+sim_results = bind_rows(output)
+sim_results %>% 
+  ggplot(aes(x = mu_hat)) + 
+  geom_density()
+```
+
+```{r}
+sim_results = 
+  rerun(100, sim_mean_sd(30, 2, 3)) %>% 
+  bind_rows()
+sim_results %>% 
+  ggplot(aes(x = mu_hat)) + 
+  geom_density()
+```
+
+```{r}
+sim_results %>% 
+  pivot_longer(
+    mu_hat:sigma_hat,
+    names_to = "parameter", 
+    values_to = "estimate") %>% 
+  group_by(parameter) %>% 
+  summarize(
+    emp_mean = mean(estimate),
+    emp_sd = sd(estimate)) %>% 
+  knitr::kable(digits = 3)
+
+```
+
+# Simulation: Mean for several n's
+
+```{r}
+n_list = 
+  list(
+    "n_30"  = 30, 
+    "n_60"  = 60, 
+    "n_120" = 120, 
+    "n_240" = 240)
+
+output = vector("list", length = 4)
+
+for (i in 1:4) {
+  output[[i]] = rerun(100, sim_mean_sd(n_list[[i]])) %>% 
+    bind_rows
+}
+```
+
+After this loop, `output` is a list of 4 data frames; each data frame contains the results of 100 simulations at different sample sizes.
+
+Let’s recast this using list columns and map
+
+```{r}
+sim_results = 
+  tibble(sample_size = c(30, 60, 120, 240)) %>% 
+  mutate(
+    output_lists = map(.x = sample_size, ~rerun(100, sim_mean_sd(n = .x))),
+    estimate_dfs = map(output_lists, bind_rows)) %>% 
+  select(-output_lists) %>% 
+  unnest(estimate_dfs)
+```
+
+```{r}
+sim_results %>% 
+  mutate(
+    sample_size = str_c("n = ", sample_size),
+    sample_size = fct_inorder(sample_size)) %>% 
+  ggplot(aes(x = sample_size, y = mu_hat, fill = sample_size)) + 
+  geom_violin()
+```
+
+Lastly I’ll look at the empirical mean and variance of these estimates.
+
+```{r}
+sim_results %>% 
+  pivot_longer(
+    mu_hat:sigma_hat,
+    names_to = "parameter", 
+    values_to = "estimate") %>% 
+  group_by(parameter, sample_size) %>% 
+  summarize(
+    emp_mean = mean(estimate),
+    emp_var = var(estimate)) %>% 
+  knitr::kable(digits = 3)
+```
+
+
+
+
+
+
+
+
+
+
